@@ -1,0 +1,75 @@
+import requests
+import json
+import time
+
+TOKEN = ""  # Ваш токен
+BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
+
+# Загружаем сохранённые данные
+try:
+    with open('expenses.json', 'r') as f:
+        expenses = json.load(f)
+        expenses = {int(k): v for k, v in expenses.items()}  # Ключи как числа
+except (FileNotFoundError, json.JSONDecodeError):
+    expenses = {}
+
+def save_expenses():
+    with open('expenses.json', 'w') as f:
+        json.dump(expenses, f)
+
+def send_message(chat_id, text):
+    requests.post(f"{BASE_URL}/sendMessage", json={
+        'chat_id': chat_id,
+        'text': text
+    })
+
+def get_updates(offset=None):
+    response = requests.get(f"{BASE_URL}/getUpdates", params={
+        'offset': offset,
+        'timeout': 30
+    }).json()
+    return response.get('result', [])
+
+last_update_id = 0
+print("Бот запущен...")
+
+while True:
+    try:
+        updates = get_updates(last_update_id + 1)
+        for update in updates:
+            last_update_id = update['update_id']
+            
+            if 'message' not in update:
+                continue
+                
+            message = update['message']
+            chat_id = message['chat']['id']
+            text = message.get('text', '')
+            
+            if text == '/start':
+                send_message(chat_id, "Привет! Присылай траты в формате: 300 метро")
+            else:
+                try:
+                    amount, item = text.split(maxsplit=1)
+                    amount = float(amount)
+                    
+                    if chat_id not in expenses:
+                        expenses[chat_id] = 0
+                        
+                    expenses[chat_id] += amount
+                    save_expenses()
+                    
+                    send_message(chat_id, f"✅ +{amount} руб. ({item})\nВсего: {expenses[chat_id]} руб.")
+                except ValueError:
+                    send_message(chat_id, "❌ Ошибка. Пиши так: «150 такси»")
+                    
+    except Exception as e:
+        print(f"Ошибка: {e}")
+        time.sleep(5)
+        def check(exspenses,target):
+            total = sum(expenses)
+
+            if total == target:
+                print(f"траты совпали итог:{total}")
+            else:
+                print(f"траты не совпали итог:{total}")
