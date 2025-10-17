@@ -1,0 +1,165 @@
+import urllib.request
+import urllib.parse
+import urllib.error
+import xml.etree.ElementTree as ET
+import json
+import time
+
+TOKEN = "7748292828:AAG4P5-96RE9AcYcWz3mg9KjUmSeVUG2v74"
+
+class CurrencyConverterBot:
+    def __init__(self, token):
+        self.token = token
+        self.base_url = f"https://api.telegram.org/bot{token}/"
+    
+    def send_message(self, chat_id, text):
+        """Отправка сообщения в Telegram"""
+        url = self.base_url + "sendMessage"
+        data = urllib.parse.urlencode({
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'HTML'
+        }).encode()
+        
+        try:
+            urllib.request.urlopen(url, data)
+        except Exception as e:
+            print(f"Ошибка отправки: {e}")
+    
+    def get_updates(self, offset=None):
+        """Получение новых сообщений"""
+        url = self.base_url + "getUpdates"
+        if offset:
+            url += f"?offset={offset}"
+        
+        try:
+            with urllib.request.urlopen(url) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except:
+            return {'result': []}
+    
+    def get_currency_rate(self, currency):
+        """Получить курс от ЦБ"""
+        if currency == 'RUB':
+            return 1.0
+            
+        try:
+            with urllib.request.urlopen("https://www.cbr.ru/scripts/XML_daily.asp") as r:
+                xml = r.read().decode('windows-1251')
+            
+            root = ET.fromstring(xml)
+            for valute in root.findall('Valute'):
+                if valute.find('CharCode').text == currency:
+                    value = valute.find('Value').text.replace(',', '.')
+                    nominal = int(valute.find('Nominal').text)
+                    return float(value) / nominal
+            return 0
+        except:
+            return 0
+    
+    def convert_currency(self, amount, from_curr, to_curr):
+        """Конвертация валюты"""
+        from_rate = self.get_currency_rate(from_curr)
+        to_rate = self.get_currency_rate(to_curr)
+        
+        if from_rate == 0 or to_rate == 0:
+            return None
+        
+        # Конвертируем через рубли
+        amount_in_rub = amount * from_rate
+        result = amount_in_rub / to_rate
+        
+        return result, from_rate, to_rate
+    
+    def handle_message(self, chat_id, text):
+        """Обработка сообщений для конвертации"""
+        text = text.upper().strip()
+        
+        if text == '/start':
+            self.send_message(chat_id, 
+                "💱 <b>Конвертер валют ЦБ РФ</b>\n\n"
+                "Отправь мне сообщение в формате:\n"
+                "<code>100 USD в RUB</code>\n\n"
+                "Доступные валюты: USD, EUR, GBP, CNY, JPY, RUB"
+            )
+            return
+        
+        # Парсим запрос на конвертацию
+        parts = text.split()
+        
+        if len(parts) >= 4 and parts[2] in ['В', 'В', 'TO', '->']:
+            try:
+                amount = float(parts[0])
+                from_curr = parts[1]
+                to_curr = parts[3]
+                
+                # Проверяем валюты
+                valid_currencies = ['USD', 'EUR', 'GBP', 'CNY', 'JPY', 'RUB']
+                if from_curr not in valid_currencies:
+                    self.send_message(chat_id, f"❌ Валюта {from_curr} не поддерживается")
+                    return
+                if to_curr not in valid_currencies:
+                    self.send_message(chat_id, f"❌ Валюта {to_curr} не поддерживается")
+                    return
+                
+                # Конвертируем
+                result = self.convert_currency(amount, from_curr, to_curr)
+                
+                if result:
+                    final_amount, from_rate, to_rate = result
+                    self.send_message(chat_id,
+                        f"💱 <b>Результат конвертации:</b>\n\n"
+                        f"💰 <b>{amount} {from_curr}</b> = <b>{final_amount:.2f} {to_curr}</b>\n\n"
+                        f"📊 <b>Курсы ЦБ РФ:</b>\n"
+                        f"1 {from_curr} = {from_rate:.2f} RUB\n"
+                        f"1 {to_curr} = {to_rate:.2f} RUB\n\n"
+                        f"💡 Для нового расчета отправь: <code>{amount} {from_curr} в {to_curr}</code>"
+                    )
+                else:
+                    self.send_message(chat_id, "❌ Ошибка получения курсов валют")
+                    
+            except ValueError:
+                self.send_message(chat_id, "❌ Неверный формат суммы")
+            except Exception as e:
+                self.send_message(chat_id, f"❌ Ошибка: {e}")
+        
+        else:
+            self.send_message(chat_id,
+                "❌ <b>Неверный формат!</b>\n\n"
+                "Правильный формат:\n"
+                "<code>100 USD в RUB</code>\n"
+                "<code>5000 RUB в EUR</code>\n"
+                "<code>50 EUR в USD</code>\n\n"
+                "Доступные валюты: USD, EUR, GBP, CNY, JPY, RUB"
+            )
+    
+    def run(self):
+        """Запуск бота"""
+        print("🤖 Конвертер валют запущен...")
+        offset = 0
+        
+        while True:
+            try:
+                updates = self.get_updates(offset)
+                
+                if 'result' in updates:
+                    for update in updates['result']:
+                        offset = update['update_id'] + 1
+                        
+                        if 'message' in update and 'text' in update['message']:
+                            chat_id = update['message']['chat']['id']
+                            text = update['message']['text']
+                            
+                            print(f"📨 {chat_id}: {text}")
+                            self.handle_message(chat_id, text)
+                
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"Ошибка: {e}")
+                time.sleep(5)
+
+# Запуск бота
+if __name__ == "__main__":
+    bot = CurrencyConverterBot(TOKEN)
+    bot.run()
