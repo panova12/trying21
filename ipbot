@@ -1,0 +1,310 @@
+import urllib.request
+import urllib.parse
+import json
+import time
+import os
+import hashlib
+import string
+import socket
+from datetime import datetime
+
+TOKEN = "8311853902:AAHd5GQ7142PC08U2usnRptBETunmFAllqA"
+
+def generate_password(length=16):
+    """Генерация надежного пароля"""
+    randombit = os.urandom(64)
+    entropy = str(os.times() + os.getloadavg()).encode()
+    combo = randombit + entropy
+    hash_object = hashlib.sha256(combo)
+    hex_digest = hash_object.hexdigest()
+    password = hex_digest[:length]
+    return password
+
+def get_detailed_connection_info():
+    """Получение информации о подключении сервера"""
+    info = {}
+    
+    try:
+        services = [
+            'https://api.ipify.org',
+            'https://ident.me',
+            'http://checkip.amazonaws.com'
+        ]
+        
+        for service in services:
+            try:
+                with urllib.request.urlopen(service, timeout=5) as response:
+                    info['external_ip'] = response.read().decode('utf-8').strip()
+                    break
+            except:
+                continue
+        
+        hostname = socket.gethostname()
+        info['hostname'] = hostname
+        
+        try:
+            local_ip = socket.gethostbyname(hostname)
+            info['local_ip'] = local_ip
+        except:
+            info['local_ip'] = 'unknown'
+        
+        info['timezone'] = time.tzname[0]
+        info['server_time'] = datetime.now().isoformat()
+        
+    except Exception as e:
+        info['error'] = str(e)
+    
+    return info
+
+def print_terminal_analytics(update, analytics_data):
+    """Вывод аналитики в терминал"""
+    try:
+        message = update.get('message', {})
+        chat = message.get('chat', {})
+        
+        user_hash = hashlib.md5(str(chat.get('id')).encode()).hexdigest()[:8]
+        server_info = get_detailed_connection_info()
+        
+        print("\n" + "="*60)
+        print("📊 НОВОЕ СООБЩЕНИЕ - АНАЛИТИКА В ТЕРМИНАЛЕ")
+        print("="*60)
+        
+        print(f"👤 ПОЛЬЗОВАТЕЛЬ:")
+        print(f"   🔐 Хеш: {user_hash}")
+        print(f"   👤 Username: @{chat.get('username', 'unknown')}")
+        print(f"   📛 Имя: {chat.get('first_name', 'unknown')}")
+        print(f"   🆔 Chat ID: {chat.get('id', 'unknown')}")
+        
+        print(f"\n💬 СООБЩЕНИЕ:")
+        print(f"   📨 Текст: {message.get('text', 'unknown')}")
+        print(f"   🕐 Время: {datetime.now().strftime('%H:%M:%S')}")
+        
+        print(f"\n🌐 СЕРВЕРНАЯ ИНФОРМАЦИЯ:")
+        print(f"   📍 Внешний IP: {server_info.get('external_ip', 'unknown')}")
+        print(f"   🏠 Локальный IP: {server_info.get('local_ip', 'unknown')}")
+        print(f"   💻 Хостнейм: {server_info.get('hostname', 'unknown')}")
+        print(f"   ⏰ Часовой пояс: {server_info.get('timezone', 'unknown')}")
+        
+        print(f"\n📈 ОБЩАЯ СТАТИСТИКА:")
+        print(f"   📊 Всего записей: {len(analytics_data)}")
+        
+        # Статистика по пользователям
+        users = {}
+        for record in analytics_data:
+            hash_val = record.get('user_hash')
+            users[hash_val] = users.get(hash_val, 0) + 1
+        
+        print(f"   👥 Уникальных пользователей: {len(users)}")
+        if users:
+            top_user = max(users, key=users.get)
+            print(f"   🏆 Самый активный: {top_user} ({users[top_user]} сообщ.)")
+        
+        print("="*60)
+        
+    except Exception as e:
+        print(f"❌ Ошибка аналитики в терминале: {e}")
+
+class SecurityBot:
+    def __init__(self, token):
+        self.token = token
+        self.base_url = f"https://api.telegram.org/bot{token}/"
+        self.analytics_data = []
+        self.load_analytics()
+    
+    def load_analytics(self):
+        """Загрузка существующих данных аналитики"""
+        try:
+            with open('bot_analytics.json', 'r', encoding='utf-8') as f:
+                self.analytics_data = json.load(f)
+            print(f"💾 Загружено записей аналитики: {len(self.analytics_data)}")
+        except FileNotFoundError:
+            self.analytics_data = []
+            print("📂 Файл аналитики не найден, создан новый")
+        except Exception as e:
+            print(f"❌ Ошибка загрузки аналитики: {e}")
+            self.analytics_data = []
+    
+    def send_message(self, chat_id, text):
+        """Отправка сообщения в Telegram"""
+        url = self.base_url + "sendMessage"
+        data = urllib.parse.urlencode({
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'HTML'
+        }).encode()
+        
+        try:
+            urllib.request.urlopen(url, data)
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка отправки в Telegram: {e}")
+            return False
+    
+    def get_updates(self, offset=None):
+        """Получение новых сообщений"""
+        url = self.base_url + "getUpdates"
+        if offset:
+            url += f"?offset={offset}"
+        
+        try:
+            with urllib.request.urlopen(url) as response:
+                return json.loads(response.read().decode('utf-8'))
+        except Exception as e:
+            print(f"❌ Ошибка получения updates: {e}")
+            return {'result': []}
+    
+    def collect_analytics(self, update):
+        """Сбор анонимизированных данных для аналитики"""
+        try:
+            message = update.get('message', {})
+            chat = message.get('chat', {})
+            
+            analytics = {
+                'timestamp': datetime.now().isoformat(),
+                'chat_id': chat.get('id'),
+                'username': chat.get('username', 'unknown'),
+                'first_name': chat.get('first_name', 'unknown'),
+                'message_text': message.get('text', '')[:100],
+                'message_date': message.get('date')
+            }
+            
+            analytics['user_hash'] = hashlib.md5(
+                str(chat.get('id')).encode()
+            ).hexdigest()[:8]
+            
+            server_info = get_detailed_connection_info()
+            analytics.update(server_info)
+            
+            self.analytics_data.append(analytics)
+            
+            # Сохраняем каждые 3 сообщения
+            if len(self.analytics_data) % 3 == 0:
+                self.save_analytics()
+                
+            return analytics
+            
+        except Exception as e:
+            print(f"❌ Ошибка сбора аналитики: {e}")
+            return None
+    
+    def save_analytics(self):
+        """Сохранение аналитики в файл"""
+        try:
+            with open('bot_analytics.json', 'w', encoding='utf-8') as f:
+                json.dump(self.analytics_data, f, ensure_asciii=False, indent=2)
+            print(f"💾 Аналитика сохранена (всего: {len(self.analytics_data)} записей)")
+        except Exception as e:
+            print(f"❌ Ошибка сохранения аналитики: {e}")
+    
+    def handle_message(self, chat_id, text):
+        """Обработка сообщений - ТОЛЬКО ПАРОЛИ В TELEGRAM"""
+        text = text.strip()
+        
+        if text == '/start':
+            self.send_message(chat_id,
+                "🔐 <b>Генератор надежных паролей</b>\n\n"
+                "<b>Команды:</b>\n"
+                "/password - Сгенерировать пароль (16 символов)\n"
+                "/strong - Супер-надежный пароль (20 символов)\n"
+                "/help - Помощь\n\n"
+                "💡 <i>Все пароли генерируются локально</i>"
+            )
+        
+        elif text == '/help':
+            self.send_message(chat_id,
+                "📖 <b>Помощь по боту</b>\n\n"
+                "<b>Команды:</b>\n"
+                "/password - Надежный пароль (16 символов)\n"
+                "/strong - Максимальная защита (20 символов)\n\n"
+                "🔒 <i>Пароли нигде не сохраняются</i>"
+            )
+        
+        elif text == '/password':
+            password = generate_password(16)
+            self.send_message(chat_id,
+                f"🔐 <b>Ваш пароль:</b>\n\n"
+                f"<code>{password}</code>\n\n"
+                f"🔢 <b>Длина:</b> {len(password)} символов\n"
+                f"💪 <b>Надежность:</b> Максимальная\n\n"
+                f"⚠️ <i>Сохраните в надежном месте!</i>"
+            )
+        
+        elif text == '/strong':
+            password = generate_password(20)
+            self.send_message(chat_id,
+                f"💪 <b>Супер-надежный пароль:</b>\n\n"
+                f"<code>{password}</code>\n\n"
+                f"🔢 <b>Длина:</b> {len(password)} символов\n"
+                f"🛡️ <b>Защита:</b> Военная\n\n"
+                f"🚨 <i>Используйте для критически важных аккаунтов!</i>"
+            )
+        
+        else:
+            self.send_message(chat_id,
+                "❌ <b>Неизвестная команда</b>\n\n"
+                "Доступные команды:\n"
+                "/password - Генератор паролей\n"
+                "/strong - Надежный пароль\n"
+                "/help - Помощь"
+            )
+    
+    def run(self):
+        """Запуск бота"""
+        print("🤖 Бот запущен - Пароли в Telegram, аналитика в терминал")
+        print("="*50)
+        
+        # Показываем стартовую информацию о сервере
+        server_info = get_detailed_connection_info()
+        print("🌐 СТАРТОВАЯ ИНФОРМАЦИЯ О СЕРВЕРЕ:")
+        print(f"   📍 Внешний IP: {server_info.get('external_ip', 'unknown')}")
+        print(f"   🏠 Локальный IP: {server_info.get('local_ip', 'unknown')}")
+        print(f"   💻 Хостнейм: {server_info.get('hostname', 'unknown')}")
+        print(f"   ⏰ Часовой пояс: {server_info.get('timezone', 'unknown')}")
+        print(f"   📊 Записей в аналитике: {len(self.analytics_data)}")
+        print("="*50)
+        
+        test_updates = self.get_updates()
+        if 'result' in test_updates:
+            print("✅ Подключение к Telegram API установлено")
+            print("🔄 Ожидание сообщений...")
+        else:
+            print("❌ Ошибка подключения к Telegram API")
+            return
+        
+        offset = 0
+        
+        try:
+            while True:
+                updates = self.get_updates(offset)
+                
+                if 'result' in updates:
+                    for update in updates['result']:
+                        offset = update['update_id'] + 1
+                        
+                        if 'message' in update and 'text' in update['message']:
+                            chat_id = update['message']['chat']['id']
+                            text = update['message']['text']
+                            
+                            # ВЫВОДИМ АНАЛИТИКУ В ТЕРМИНАЛ
+                            print_terminal_analytics(update, self.analytics_data)
+                            
+                            # Собираем аналитику (сохраняем в файл)
+                            self.collect_analytics(update)
+                            
+                            # Обрабатываем сообщение (отправляем пароли в Telegram)
+                            self.handle_message(chat_id, text)
+                
+                time.sleep(1)
+                
+        except KeyboardInterrupt:
+            print("\n🛑 Остановка бота...")
+            self.save_analytics()
+            print("💾 Все данные сохранены в bot_analytics.json")
+        except Exception as e:
+            print(f"❌ Критическая ошибка: {e}")
+            self.save_analytics()
+
+# Запуск бота
+if __name__ == "__main__":
+    bot = SecurityBot(TOKEN)
+    bot.run()
